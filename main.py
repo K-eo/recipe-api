@@ -6,44 +6,47 @@ from io import StringIO
 
 app = FastAPI()
 
-# CORS setup
+# Allow CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Load CSV from Google Drive
 def load_data():
     file_id = "1-B_3b1x2Klct6LdhmGIslKb6bTxDcJuK"
-    url = f"https://drive.google.com/uc?export=download&id={file_id}"
+    url = f"https://drive.google.com/uc?id={file_id}&export=download"
 
     response = requests.get(url)
-    content = response.text
+    response.raise_for_status()
 
-    # Try to detect if it’s accidentally HTML (which Google returns sometimes)
-    if "<html" in content.lower():
-        raise ValueError("Failed to download CSV – Google Drive returned HTML instead. Make sure file is publicly shared.")
+    df = pd.read_csv(StringIO(response.text))
 
-    df = pd.read_csv(StringIO(content))
+    # Clean column names
+    df.columns = df.columns.str.strip()
 
-    # Show actual columns in log
-    print("Columns found:", df.columns.tolist())
+    # Drop unnamed index column if present
+    if df.columns[0].lower().startswith("unnamed"):
+        df = df.iloc[:, 1:]
 
-    # Only select expected columns if they exist
-    expected_cols = ['title', 'ingredients', 'NER', 'directions']
-    missing = [col for col in expected_cols if col not in df.columns]
-    if missing:
-        raise ValueError(f"Missing expected columns in CSV: {missing}")
+    return df
 
-    return df[expected_cols]
-
+# Load data once at startup
 df = load_data()
 
 @app.get("/")
 def read_root():
-    return {"message": "Recipe API running"}
+    return {"message": "Recipe API is running!"}
 
 @app.get("/recipes")
-def get_recipes():
+def get_all_recipes():
     return df.to_dict(orient="records")
+
+@app.get("/recipes/{index}")
+def get_recipe_by_index(index: int):
+    if index < 0 or index >= len(df):
+        return {"error": "Recipe not found"}
+    return df.iloc[index].to_dict()
