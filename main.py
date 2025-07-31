@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 import requests
@@ -6,7 +6,7 @@ from io import StringIO
 
 app = FastAPI()
 
-# Allow CORS for frontend access
+# CORS settings
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,15 +19,16 @@ app.add_middleware(
 def load_data():
     file_id = "1-B_3b1x2Klct6LdhmGIslKb6bTxDcJuK"
     url = f"https://drive.google.com/uc?id={file_id}&export=download"
-
     response = requests.get(url)
     response.raise_for_status()
 
     df = pd.read_csv(StringIO(response.text))
-    df.columns = df.columns.str.strip()  # clean column names
+    df.columns = df.columns.str.strip()
+
+    # No column dropping!
     return df
 
-# Load data once at startup
+# Load once at startup
 df = load_data()
 
 @app.get("/")
@@ -40,18 +41,17 @@ def get_all_recipes():
 
 @app.get("/recipes/{index}")
 def get_recipe_by_index(index: int):
-    try:
-        return df.iloc[index].to_dict()
-    except IndexError:
+    if index < 0 or index >= len(df):
         return {"error": "Recipe not found"}
+    return df.iloc[index].to_dict()
 
 @app.get("/search")
-def search_recipes(query: str):
-    query_lower = query.lower()
-    filtered = df[df.apply(
-        lambda row: query_lower in str(row['title']).lower()
-        or query_lower in str(row['ingredients']).lower()
-        or query_lower in str(row['directions']).lower(),
-        axis=1
-    )]
-    return filtered.to_dict(orient="records")
+def search_recipes(query: str = Query(..., min_length=1)):
+    query = query.lower()
+    results = []
+
+    for _, row in df.iterrows():
+        if any(query in str(row[col]).lower() for col in ['title', 'ingredients', 'NER', 'directions']):
+            results.append(row.to_dict())
+
+    return results
