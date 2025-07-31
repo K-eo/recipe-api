@@ -6,7 +6,7 @@ from io import StringIO
 
 app = FastAPI()
 
-# Allow CORS
+# Allow CORS for frontend access
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -24,14 +24,7 @@ def load_data():
     response.raise_for_status()
 
     df = pd.read_csv(StringIO(response.text))
-
-    # Clean column names
-    df.columns = df.columns.str.strip()
-
-    # Drop unnamed index column if present
-    if df.columns[0] == "":
-        df = df.iloc[:, 1:]
-
+    df.columns = df.columns.str.strip()  # clean column names
     return df
 
 # Load data once at startup
@@ -47,6 +40,18 @@ def get_all_recipes():
 
 @app.get("/recipes/{index}")
 def get_recipe_by_index(index: int):
-    if index < 0 or index >= len(df):
+    try:
+        return df.iloc[index].to_dict()
+    except IndexError:
         return {"error": "Recipe not found"}
-    return df.iloc[index].to_dict()
+
+@app.get("/search")
+def search_recipes(query: str):
+    query_lower = query.lower()
+    filtered = df[df.apply(
+        lambda row: query_lower in str(row['title']).lower()
+        or query_lower in str(row['ingredients']).lower()
+        or query_lower in str(row['directions']).lower(),
+        axis=1
+    )]
+    return filtered.to_dict(orient="records")
