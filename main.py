@@ -1,41 +1,49 @@
 from fastapi import FastAPI, Query
+from fastapi.responses import JSONResponse
 import pandas as pd
-import os
 import requests
+from io import StringIO
 
 app = FastAPI()
 
 CSV_URL = "https://drive.google.com/uc?export=download&id=1-B_3b1x2Klct6LdhmGIslKb6bTxDcJuK"
-CSV_FILE = "recipes.csv"
 
-# Download the CSV if it doesn't exist locally
-if not os.path.exists(CSV_FILE):
-    print("Downloading recipes.csv...")
-    try:
-        r = requests.get(CSV_URL)
-        with open(CSV_FILE, "wb") as f:
-            f.write(r.content)
-        print("Download complete.")
-    except Exception as e:
-        raise RuntimeError(f"Failed to download CSV: {e}")
+def load_data():
+    response = requests.get(CSV_URL)
+    if response.status_code != 200:
+        raise Exception("Failed to download CSV")
 
-# Load the CSV
-try:
-    df = pd.read_csv(CSV_FILE)
-except Exception as e:
-    raise RuntimeError(f"Failed to load CSV: {e}")
+    # Use only the 4 relevant columns
+    df = pd.read_csv(StringIO(response.text), usecols=['title', 'ingredients', 'NER', 'directions'])
+
+    # Convert NER column from string to list
+    df['NER'] = df['NER'].apply(eval)
+
+    # Drop rows with missing data in key columns
+    df.dropna(subset=['NER', 'title', 'directions'], inplace=True)
+    return df
+
+df = load_data()
+
+@app.get("/")
+def root():
+    return {"message": "Recipe API is running!"}
 
 @app.get("/search")
-def search_recipes(ingredients: str = Query(..., description="Comma-separated list of ingredients")):
+def search(ingredients: str = Query(..., description="Comma-separated ingredients")):
     try:
-        terms = [term.strip().lower() for term in ingredients.split(",")]
+        input_ingredients = [ing.strip().lower() for ing in ingredients.split(",")]
+        results = []
 
-        def matches(row):
-            ner_list = row["NER"].strip("[]").replace("'", "").split(", ")
-            return all(any(term in ing.lower() for ing in ner_list) for term in terms)
+        for _, row in df.iterrows():
+            ner_ingredients = [item.lower() for item in row['NER']]
+            if all(ing in ner_ingredients for ing in input_ingredients):
+                results.append({
+                    "title": row['title'],
+                    "ingredients": row['ingredients'],
+                    "directions": row['directions']
+                })
 
-        results = df[df.apply(matches, axis=1)]
-        return results[["title", "NER", "directions"]].head(5).to_dict(orient="records")
-
+        return {"results": results if results else "No matching recipes found."}
     except Exception as e:
-        return {"error": str(e)}
+        return JSONResponse(content={"error": str(e)}, status_code=500)
