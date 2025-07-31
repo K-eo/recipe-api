@@ -1,36 +1,49 @@
-from fastapi import FastAPI, Query
-from typing import List
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 import requests
 from io import StringIO
 
 app = FastAPI()
 
-# Load data from Google Drive CSV
+# CORS setup
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 def load_data():
     file_id = "1-B_3b1x2Klct6LdhmGIslKb6bTxDcJuK"
-    url = f"https://drive.google.com/uc?id={file_id}&export=download"
+    url = f"https://drive.google.com/uc?export=download&id={file_id}"
+
     response = requests.get(url)
-    response.raise_for_status()
+    content = response.text
 
-    df = pd.read_csv(StringIO(response.text), index_col=0)
-    df.columns = df.columns.str.strip()  # Ensure no leading/trailing spaces
-    df = df[['title', 'ingredients', 'NER', 'directions']]
-    return df
+    # Try to detect if it’s accidentally HTML (which Google returns sometimes)
+    if "<html" in content.lower():
+        raise ValueError("Failed to download CSV – Google Drive returned HTML instead. Make sure file is publicly shared.")
 
-# Load once on startup
+    df = pd.read_csv(StringIO(content))
+
+    # Show actual columns in log
+    print("Columns found:", df.columns.tolist())
+
+    # Only select expected columns if they exist
+    expected_cols = ['title', 'ingredients', 'NER', 'directions']
+    missing = [col for col in expected_cols if col not in df.columns]
+    if missing:
+        raise ValueError(f"Missing expected columns in CSV: {missing}")
+
+    return df[expected_cols]
+
 df = load_data()
 
 @app.get("/")
-def root():
-    return {"message": "Welcome to the Recipe API!"}
+def read_root():
+    return {"message": "Recipe API running"}
 
-@app.get("/search")
-def search(ingredients: List[str] = Query(...)):
-    try:
-        results = df[df['NER'].apply(
-            lambda ner: all(ingredient.lower() in ner.lower() for ingredient in ingredients)
-        )]
-        return {"results": results.to_dict(orient="records")}
-    except Exception as e:
-        return {"error": str(e)}
+@app.get("/recipes")
+def get_recipes():
+    return df.to_dict(orient="records")
