@@ -29,7 +29,7 @@ def load_data():
     df.columns = df.columns.str.strip()
 
     # Drop unnamed index column if present
-    if df.columns[0].lower().startswith("unnamed"):
+    if df.columns[0] == "":
         df = df.iloc[:, 1:]
 
     return df
