@@ -1,53 +1,58 @@
 from fastapi import FastAPI, Query
-from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
-import requests
-from io import StringIO
+import os
 
 app = FastAPI()
 
-# Enable CORS for all origins (helpful during development)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Path to your data folder
+data_dir = "./data"
+dataframes = []
 
-# Load CSV data from Google Drive
-def load_data():
-    file_id = "1CZYUf4QbmW8ObtEMCUcSM2QvVuGIrxfR"
-    url = f"https://drive.google.com/uc?id={file_id}&export=download"
-    
-    response = requests.get(url)
-    response.raise_for_status()
-    
-    df = pd.read_csv(StringIO(response.text))
-    df.columns = df.columns.str.strip().str.lower()  # Normalize column names (e.g. "Title", "Ingredients")
-    return df
-
-# Load once at startup
-df = load_data()
+# Load all CSV files at startup
+for filename in sorted(os.listdir(data_dir)):
+    if filename.endswith(".csv"):
+        path = os.path.join(data_dir, filename)
+        try:
+            df = pd.read_csv(path)
+            df.columns = df.columns.str.strip()
+            dataframes.append(df)
+        except Exception as e:
+            print(f"Error reading {filename}: {e}")
 
 @app.get("/")
 def read_root():
-    return {"message": "Recipe API is running!"}
+    return {"message": "Recipe API is running"}
+
+@app.get("/count")
+def get_count():
+    total = sum(len(df) for df in dataframes)
+    return {"files_loaded": len(dataframes), "total_rows": total}
 
 @app.get("/recipes")
-def get_all_recipes():
-    return df.to_dict(orient="records")
+def get_all_recipes(limit: int = 100):
+    all_recipes = []
+    for df in dataframes:
+        all_recipes.extend(df.to_dict(orient="records"))
+        if len(all_recipes) >= limit:
+            break
+    return all_recipes[:limit]
 
-@app.get("/recipes/{index}")
-def get_recipe_by_index(index: int):
-    if index < 0 or index >= len(df):
-        return {"error": "Recipe not found"}
-    return df.iloc[index].to_dict()
+@app.get("/recipes/{global_index}")
+def get_recipe_by_index(global_index: int):
+    count = 0
+    for df in dataframes:
+        if global_index < count + len(df):
+            return df.iloc[global_index - count].to_dict()
+        count += len(df)
+    return {"error": "Recipe not found"}
 
 @app.get("/search")
-def search_recipes(query: str = Query(..., description="Search by ingredients")):
-    query = query.lower()
-    if "ingredients" not in df.columns:
-        return {"error": "Ingredients column missing from data"}
-    matches = df[df["ingredients"].str.lower().str.contains(query, na=False)]
-    return matches.to_dict(orient="records")
+def search_recipes(query: str = Query(..., description="Search term in NER field"), limit: int = 20):
+    results = []
+    for df in dataframes:
+        if "NER" in df.columns:
+            matches = df[df["NER"].str.contains(query, case=False, na=False)]
+            results.extend(matches.to_dict(orient="records"))
+            if len(results) >= limit:
+                break
+    return results[:limit]
