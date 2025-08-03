@@ -1,43 +1,49 @@
 from fastapi import FastAPI, Query
 from pymongo import MongoClient
+from dotenv import load_dotenv
+from bson import ObjectId
 import os
+
+# Load environment variables
+load_dotenv()
+
+# Connect to MongoDB using MONGO_URI from Railway environment variable
+MONGO_URI = os.getenv("MONGO_URI")
+client = MongoClient(MONGO_URI)
+
+# Explicitly select your DB and collection
+db = client["FridgeChef"]
+collection = db["RecipeList"]
 
 app = FastAPI()
 
-# Get Mongo URI from environment variable
-MONGO_URI = os.environ.get("MONGO_URI")
-
-# Ensure it exists
-if not MONGO_URI:
-    raise RuntimeError("MONGO_URI environment variable not set")
-
-# Extract database name from the URI
-db_name = MONGO_URI.rsplit("/", 1)[-1].split("?")[0]
-client = MongoClient(MONGO_URI)
-db = client[db_name]
-collection = db["recipes"]  # assuming collection is called 'recipes'
+def serialize(doc):
+    doc["_id"] = str(doc["_id"])
+    return doc
 
 @app.get("/")
-def root():
-    return {"message": "Recipe API is connected to MongoDB!"}
+def home():
+    return {"message": "FridgeChef API is running!"}
 
 @app.get("/count")
 def count_recipes():
-    return {"total_recipes": collection.count_documents({})}
-
-@app.get("/search")
-def search(query: str = Query(..., description="Keyword to search in NER field"), limit: int = 20):
-    results = collection.find({"NER": {"$regex": query, "$options": "i"}}).limit(limit)
-    return [r for r in results]
+    count = collection.count_documents({})
+    return {"total_recipes": count}
 
 @app.get("/recipes")
-def get_all(limit: int = 100):
-    return [r for r in collection.find().limit(limit)]
+def get_recipes(limit: int = 20):
+    recipes = collection.find().limit(limit)
+    return [serialize(r) for r in recipes]
 
-@app.get("/recipes/{index}")
-def get_by_index(index: int):
-    result = collection.find().skip(index).limit(1)
-    item = list(result)
-    if item:
-        return item[0]
-    return {"error": "Recipe not found"}
+@app.get("/search")
+def search(query: str = Query(...), limit: int = 20):
+    results = collection.find({"NER": {"$regex": query, "$options": "i"}}).limit(limit)
+    return [serialize(r) for r in results]
+
+@app.get("/recipes/{id}")
+def get_recipe_by_id(id: str):
+    try:
+        recipe = collection.find_one({"_id": ObjectId(id)})
+        return serialize(recipe) if recipe else {"error": "Recipe not found"}
+    except Exception:
+        return {"error": "Invalid ID format"}
