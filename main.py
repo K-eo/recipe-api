@@ -1,29 +1,66 @@
+from fastapi import FastAPI, Query
+import pandas as pd
 import os
 import shutil
 
-# Adjust these paths
-SOURCE_DIR = os.path.join(os.path.dirname(__file__), "data")
-TARGET_DIR = "/mnt/stunning-volume"
+app = FastAPI()
 
-def copy_files_to_volume():
-    if not os.path.exists(SOURCE_DIR):
-        print(f"❌ Source directory does not exist: {SOURCE_DIR}")
-        return
+# Define repo and volume paths
+REPO_DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+VOLUME_PATH = "/mnt/stunning-volume"
 
-    if not os.path.exists(TARGET_DIR):
-        os.makedirs(TARGET_DIR)
-        print(f"📁 Created target directory: {TARGET_DIR}")
+# Ensure the volume directory exists
+os.makedirs(VOLUME_PATH, exist_ok=True)
 
+# Copy CSV files to the Railway volume (only if volume is empty)
+if not os.listdir(VOLUME_PATH):
+    for filename in sorted(os.listdir(REPO_DATA_DIR)):
+        if filename.endswith(".csv"):
+            shutil.copy(os.path.join(REPO_DATA_DIR, filename), VOLUME_PATH)
+
+# Lazy-load CSVs from volume
+def get_all_dataframes():
+    dataframes = []
+    for filename in sorted(os.listdir(VOLUME_PATH)):
+        if filename.endswith(".csv"):
+            path = os.path.join(VOLUME_PATH, filename)
+            df = pd.read_csv(path)
+            dataframes.append(df)
+    return dataframes
+
+@app.get("/")
+def root():
+    return {"message": "Recipe API is running."}
+
+@app.get("/count")
+def count():
+    total = sum(len(df) for df in get_all_dataframes())
+    return {"total_recipes": total, "files_loaded": len(get_all_dataframes())}
+
+@app.get("/search")
+def search(query: str = Query(...), limit: int = 20):
+    results = []
+    for df in get_all_dataframes():
+        matches = df[df["NER"].str.contains(query, case=False, na=False)]
+        results.extend(matches.to_dict(orient="records"))
+        if len(results) >= limit:
+            break
+    return results[:limit]
+
+@app.get("/recipes")
+def all_recipes(limit: int = 100):
+    all_data = []
+    for df in get_all_dataframes():
+        all_data.extend(df.to_dict(orient="records"))
+        if len(all_data) >= limit:
+            break
+    return all_data[:limit]
+
+@app.get("/recipes/{global_index}")
+def get_by_index(global_index: int):
     count = 0
-    for filename in os.listdir(SOURCE_DIR):
-        source_file = os.path.join(SOURCE_DIR, filename)
-        target_file = os.path.join(TARGET_DIR, filename)
-
-        if os.path.isfile(source_file):
-            shutil.copy2(source_file, target_file)
-            count += 1
-
-    print(f"✅ Copied {count} files from {SOURCE_DIR} to {TARGET_DIR}")
-
-if __name__ == "__main__":
-    copy_files_to_volume()
+    for df in get_all_dataframes():
+        if global_index < count + len(df):
+            return df.iloc[global_index - count].to_dict()
+        count += len(df)
+    return {"error": "Recipe not found"}
