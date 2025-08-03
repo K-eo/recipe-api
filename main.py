@@ -4,7 +4,7 @@ import os
 
 app = FastAPI()
 
-DATA_DIR = "./data"
+DATA_DIR = "/mnt/volume"
 CSV_CACHE = {}  # Lazy-loaded cache
 
 
