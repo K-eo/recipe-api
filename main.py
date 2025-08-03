@@ -1,66 +1,18 @@
-from fastapi import FastAPI, Query
-import pandas as pd
 import os
+import shutil
 
-app = FastAPI()
+REPO_DATA_DIR = "./data"  # Git-tracked folder
+VOLUME_DATA_DIR = "/mnt/volume"  # Railway volume
 
-DATA_DIR = "/mnt/volume"
-CSV_CACHE = {}  # Lazy-loaded cache
+# Ensure volume directory exists
+os.makedirs(VOLUME_DATA_DIR, exist_ok=True)
 
+# Copy data only if not already in the volume
+for filename in os.listdir(REPO_DATA_DIR):
+    src_path = os.path.join(REPO_DATA_DIR, filename)
+    dest_path = os.path.join(VOLUME_DATA_DIR, filename)
+    if not os.path.exists(dest_path):
+        shutil.copy(src_path, dest_path)
 
-def get_all_dataframes():
-    if CSV_CACHE:
-        return CSV_CACHE.values()
-
-    for filename in sorted(os.listdir(DATA_DIR)):
-        if filename.endswith(".csv"):
-            path = os.path.join(DATA_DIR, filename)
-            df = pd.read_csv(path)
-            CSV_CACHE[filename] = df
-    return CSV_CACHE.values()
-
-
-@app.get("/")
-def read_root():
-    return {"message": "Recipe API is running"}
-
-
-@app.get("/count")
-def get_count():
-    total = 0
-    files = 0
-    for df in get_all_dataframes():
-        total += len(df)
-        files += 1
-    return {"files_loaded": files, "total_rows": total}
-
-
-@app.get("/search")
-def search_recipes(query: str = Query(...), limit: int = 20):
-    results = []
-    for df in get_all_dataframes():
-        matches = df[df["NER"].str.contains(query, case=False, na=False)]
-        results.extend(matches.to_dict(orient="records"))
-        if len(results) >= limit:
-            break
-    return results[:limit]
-
-
-@app.get("/recipes")
-def get_all_recipes(limit: int = 100):
-    all_data = []
-    for df in get_all_dataframes():
-        all_data.extend(df.to_dict(orient="records"))
-        if len(all_data) >= limit:
-            break
-    return all_data[:limit]
-
-
-@app.get("/recipes/{global_index}")
-def get_recipe(global_index: int):
-    count = 0
-    for df in get_all_dataframes():
-        if global_index < count + len(df):
-            return df.iloc[global_index - count].to_dict()
-        count += len(df)
-    return {"error": "Recipe not found"}
+# Use the volume data path going forward
+DATA_DIR = VOLUME_DATA_DIR
