@@ -1,50 +1,48 @@
-import os
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from pymongo import MongoClient
+from pymongo.errors import ConnectionFailure
+from fastapi.middleware.cors import CORSMiddleware
+from bson.json_util import dumps
 from dotenv import load_dotenv
-from typing import List
-from fastapi.responses import JSONResponse
+import os
 
 # Load environment variables
 load_dotenv()
 
-# Get MongoDB URI from environment variable
-MONGO_URI = os.getenv("MONGO_URI")
-if not MONGO_URI:
-    raise ValueError("MONGO_URI not set in environment variables")
-
 # Connect to MongoDB
+MONGO_URI = os.getenv("MONGO_URI")
 client = MongoClient(MONGO_URI)
+try:
+    client.admin.command("ping")
+except ConnectionFailure:
+    raise Exception("MongoDB connection failed.")
+
+# Select database and collection
 db = client["FridgeChef"]
 collection = db["RecipeList"]
 
-# Create FastAPI app
+# Initialize FastAPI
 app = FastAPI()
 
+# Enable CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Home route
 @app.get("/")
 def read_root():
-    return {"message": "FridgeChef API is running."}
+    return {"message": "FridgeChef API is live."}
 
-@app.get("/recipes", response_class=JSONResponse)
-def get_recipes(skip: int = 0, limit: int = 10):
-    """Fetch a limited list of recipes."""
-    try:
-        recipes = list(collection.find().skip(skip).limit(limit))
-        for recipe in recipes:
-            recipe["_id"] = str(recipe["_id"])  # Convert ObjectId to string for JSON serialization
-        return recipes
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
-
-@app.get("/recipes/{recipe_id}")
-def get_recipe(recipe_id: str):
-    """Fetch a single recipe by its ID."""
-    from bson import ObjectId
-    try:
-        recipe = collection.find_one({"_id": ObjectId(recipe_id)})
-        if recipe:
-            recipe["_id"] = str(recipe["_id"])
-            return recipe
-        return JSONResponse(status_code=404, content={"error": "Recipe not found"})
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
+# Search route
+@app.get("/search")
+def search_recipes(query: str = Query(..., min_length=1), limit: int = 10):
+    results = collection.find(
+        {"$text": {"$search": query}},
+        {"score": {"$meta": "textScore"}}
+    ).sort([("score", {"$meta": "textScore"})]).limit(limit)
+    return list(results)
