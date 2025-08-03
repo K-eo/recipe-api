@@ -1,49 +1,48 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException
 from pymongo import MongoClient
+from pymongo.errors import ConnectionFailure
 from dotenv import load_dotenv
-from bson import ObjectId
 import os
 
-# Load environment variables
+# Load environment variables from Railway-provided environment
 load_dotenv()
 
-# Connect to MongoDB using MONGO_URI from Railway environment variable
+# Connect to MongoDB
 MONGO_URI = os.getenv("MONGO_URI")
-client = MongoClient(MONGO_URI)
+if not MONGO_URI:
+    raise Exception("MONGO_URI environment variable is not set")
 
-# Explicitly select your DB and collection
+client = MongoClient(MONGO_URI)
+try:
+    client.admin.command('ping')  # Test connection
+except ConnectionFailure:
+    raise Exception("Failed to connect to MongoDB")
+
+# Access specific database and collection
 db = client["FridgeChef"]
 collection = db["RecipeList"]
 
 app = FastAPI()
 
-def serialize(doc):
-    doc["_id"] = str(doc["_id"])
-    return doc
-
 @app.get("/")
-def home():
-    return {"message": "FridgeChef API is running!"}
+def root():
+    return {"message": "Welcome to the FridgeChef API"}
 
-@app.get("/count")
-def count_recipes():
-    count = collection.count_documents({})
-    return {"total_recipes": count}
+@app.get("/recipes/")
+def get_recipes(skip: int = 0, limit: int = 10):
+    cursor = collection.find().skip(skip).limit(limit)
+    recipes = [doc for doc in cursor]
+    for recipe in recipes:
+        recipe["_id"] = str(recipe["_id"])  # Convert ObjectId to string
+    return {"recipes": recipes}
 
-@app.get("/recipes")
-def get_recipes(limit: int = 20):
-    recipes = collection.find().limit(limit)
-    return [serialize(r) for r in recipes]
-
-@app.get("/search")
-def search(query: str = Query(...), limit: int = 20):
-    results = collection.find({"NER": {"$regex": query, "$options": "i"}}).limit(limit)
-    return [serialize(r) for r in results]
-
-@app.get("/recipes/{id}")
-def get_recipe_by_id(id: str):
-    try:
-        recipe = collection.find_one({"_id": ObjectId(id)})
-        return serialize(recipe) if recipe else {"error": "Recipe not found"}
-    except Exception:
-        return {"error": "Invalid ID format"}
+@app.get("/recipes/{recipe_id}")
+def get_recipe_by_id(recipe_id: str):
+    from bson import ObjectId
+    if not ObjectId.is_valid(recipe_id):
+        raise HTTPException(status_code=400, detail="Invalid ID format")
+    recipe = collection.find_one({"_id": ObjectId(recipe_id)})
+    if recipe is None:
+        raise HTTPException(status_code=404, detail="Recipe not found")
+    recipe["_id"] = str(recipe["_id"])
+    return recipe
