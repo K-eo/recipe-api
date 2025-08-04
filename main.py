@@ -1,27 +1,40 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from pymongo import MongoClient
-from pymongo.errors import ServerSelectionTimeoutError
 from dotenv import load_dotenv
+from pymongo.errors import ServerSelectionTimeoutError
 import os
 
-# Load environment variables (e.g., MONGO_URI from .env or Railway settings)
+# Load environment variables
 load_dotenv()
-app = FastAPI()
+
+# Get Mongo URI from env
+MONGO_URI = os.getenv("MONGO_URI")
+if not MONGO_URI:
+    raise RuntimeError("MONGO_URI not found in environment variables")
 
 # Connect to MongoDB
-MONGO_URI = os.getenv("MONGO_URI")
-client = MongoClient(MONGO_URI)
-db = client["fridgechef"]  # Replace if your DB is named differently
-collection = db["recipes_data"]
+try:
+    client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+    db = client["fridgechef"]
+    collection = db["RecipeList"]
+    client.server_info()  # Force connection on startup to catch config issues
+except ServerSelectionTimeoutError as err:
+    raise RuntimeError(f"MongoDB connection failed: {err}")
 
-# Search endpoint
+# Create FastAPI app
+app = FastAPI()
+
+@app.get("/")
+def root():
+    return {"message": "FridgeChef API is live!"}
+
 @app.get("/search")
-def search_recipes(q: str = Query(..., min_length=1)):
+def search(query: str = Query(..., min_length=1), limit: int = 20):
     try:
         results = collection.find(
-            { "$text": { "$search": q } },
-            { "score": { "$meta": "textScore" }, "_id": 0 }
-        ).sort([("score", { "$meta": "textScore" })]).limit(20)
+            {"$text": {"$search": query}},
+            {"score": {"$meta": "textScore"}, "_id": 0}
+        ).sort([("score", {"$meta": "textScore"})]).limit(limit)
         return list(results)
-    except ServerSelectionTimeoutError:
-        return { "error": "Could not connect to MongoDB." }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
