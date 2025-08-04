@@ -1,40 +1,61 @@
-from fastapi import FastAPI, Query
-from fastapi.middleware.cors import CORSMiddleware
+import os
+from fastapi import FastAPI, Query, HTTPException
 from pymongo import MongoClient
 from bson import ObjectId
-import os
 
 app = FastAPI()
 
-# Enable CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+# Grab your full URI (with /recipes_list) from Railway’s env
+MONGO_URI = os.getenv(
+    "MONGO_URI",
+    "mongodb+srv://FridgeChef:TheRECIPEapp@cluster0.gaeubs.mongodb.net/recipes_list?retryWrites=true&w=majority"
 )
 
-# Use Railway's env variable or fallback
-MONGO_URI = os.getenv("MONGO_URI", "your fallback URI")
-
-# Connect to DB
+# Connect & pick the exact DB & collection
 client = MongoClient(MONGO_URI)
-db = client["recipes_list"]  # IMPORTANT: Explicitly define database
+db = client["recipes_list"]
 collection = db["recipes_data"]
 
 
 @app.get("/search")
-def search(query: str = Query(...), limit: int = Query(10)):
-    results = collection.find(
-        {
-            "$or": [
-                {"title": {"$regex": query, "$options": "i"}},
-                {"ingredients": {"$regex": query, "$options": "i"}},
-                {"directions": {"$regex": query, "$options": "i"}},
-                {"NER": {"$regex": query, "$options": "i"}},
-            ]
-        }
-    ).limit(limit)
+def search(query: str = Query(..., min_length=1), limit: int = Query(10, ge=1, le=100)):
+    """
+    Search for recipes whose title OR any element of ingredients/directions/NER
+    contains `query` (case-insensitive). Returns up to `limit` docs.
+    """
+    try:
+        cursor = collection.find(
+            {
+                "$or": [
+                    {"title": {"$regex": query, "$options": "i"}},
+                    {"ingredients": {"$elemMatch": {"$regex": query, "$options": "i"}}},
+                    {"directions": {"$elemMatch": {"$regex": query, "$options": "i"}}},
+                    {"NER": {"$elemMatch": {"$regex": query, "$options": "i"}}},
+                ]
+            }
+        ).limit(limit)
+    except Exception as e:
+        raise HTTPException(500, f"DB query failed: {e}")
 
-    # Convert ObjectId to string
-    return [{**doc, "_id": str(doc["_id"])} for doc in results]
+    results = []
+    for doc in cursor:
+        doc["_id"] = str(doc["_id"])
+        results.append(doc)
+    return results
+
+
+@app.get("/recipes/{number}")
+def get_recipe(number: int):
+    """
+    Fetch a single recipe by its `number` field.
+    """
+    doc = collection.find_one({"number": number})
+    if not doc:
+        raise HTTPException(404, "Recipe not found")
+    doc["_id"] = str(doc["_id"])
+    return doc
+
+
+@app.get("/")
+def home():
+    return {"ok": True, "message": "FridgeChef API is alive!"}
