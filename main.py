@@ -1,46 +1,40 @@
 from fastapi import FastAPI, Query
-from pymongo import MongoClient
-from pymongo.errors import ServerSelectionTimeoutError
-from typing import List
 from fastapi.middleware.cors import CORSMiddleware
+from pymongo import MongoClient
+from bson import ObjectId
 import os
-import re
 
 app = FastAPI()
 
-# Allow all CORS (customize for production)
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# MongoDB setup
-MONGO_URI = os.getenv("MONGO_URI")
+# Use Railway's env variable or fallback
+MONGO_URI = os.getenv("MONGO_URI", "your fallback URI")
+
+# Connect to DB
 client = MongoClient(MONGO_URI)
-db = client["recipes_list"]
+db = client["recipes_list"]  # IMPORTANT: Explicitly define database
 collection = db["recipes_data"]
 
+
 @app.get("/search")
-def search_recipes(query: str = Query(...), limit: int = 5):
-    try:
-        regex = re.compile(query, re.IGNORECASE)
-        results = list(collection.find({
+def search(query: str = Query(...), limit: int = Query(10)):
+    results = collection.find(
+        {
             "$or": [
-                {"title": {"$regex": regex}},
-                {"ingredients": {"$elemMatch": {"$regex": regex}}},
-                {"NER": {"$elemMatch": {"$regex": regex}}},
-                {"directions": {"$elemMatch": {"$regex": regex}}}
+                {"title": {"$regex": query, "$options": "i"}},
+                {"ingredients": {"$regex": query, "$options": "i"}},
+                {"directions": {"$regex": query, "$options": "i"}},
+                {"NER": {"$regex": query, "$options": "i"}},
             ]
-        }).limit(limit))
+        }
+    ).limit(limit)
 
-        # Convert ObjectId to string for JSON serialization
-        for doc in results:
-            doc["_id"] = str(doc["_id"])
-
-        return results
-
-    except ServerSelectionTimeoutError:
-        return {"error": "Database connection failed"}
+    # Convert ObjectId to string
+    return [{**doc, "_id": str(doc["_id"])} for doc in results]
