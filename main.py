@@ -4,14 +4,15 @@ from pymongo import MongoClient
 from dotenv import load_dotenv
 import os
 
-# Load environment variables from .env file (useful if running locally)
 load_dotenv()
 
 app = FastAPI()
 
-# MongoDB connection
+# Set up MongoDB connection
 MONGO_URI = os.getenv("MONGO_URI")
 client = MongoClient(MONGO_URI)
+
+# ✅ Specify the DB and collection explicitly
 db = client["recipes_list"]
 collection = db["recipes_data"]
 
@@ -21,7 +22,7 @@ def root():
 
 @app.get("/search")
 def search_recipes(query: str = Query(..., min_length=1), limit: int = 10):
-    regex_query = {"$regex": query, "$options": "i"}  # case-insensitive
+    regex_query = {"$regex": query, "$options": "i"}
 
     results = collection.find(
         {
