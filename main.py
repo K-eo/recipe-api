@@ -6,7 +6,7 @@ import os
 
 app = FastAPI()
 
-# Allow CORS (for Swagger UI or browser testing)
+# Allow cross-origin
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,17 +15,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# MongoDB connection
-MONGO_URI = os.getenv("MONGO_URI", "your-mongodb-uri")  # Replace with your URI in Railway ENV
+# Mongo setup
+MONGO_URI = os.environ.get("MONGO_URI")
 client = MongoClient(MONGO_URI)
-db = client["recipes_list"]
+db = client.get_database()  # will work if URI ends with /recipes_list
 collection = db["recipes_data"]
 
 @app.get("/search")
-def search_recipes(query: str = Query(...), limit: int = 5):
-    # Use regex on the NER field (list of strings)
+def search(query: str = Query(...), limit: int = 5):
+    regex = {"$regex": query, "$options": "i"}  # case-insensitive search
     results = collection.find(
-        { "NER": { "$regex": query, "$options": "i" } }
+        {
+            "$or": [
+                {"NER": regex},
+                {"ingredients": regex},
+                {"title": regex},
+            ]
+        }
     ).limit(limit)
-
     return list(results)
